@@ -24,6 +24,7 @@ return new class extends Migration
             $table->decimal('commission_rate', 8, 2); // Adjust precision and scale as needed
             // Use varchar for a unique discount code
             $table->string('discount_code', 255)->unique();
+            $table->string('stripe_connected_account_id')->nullable();
             $table->timestamps();
         });
     }

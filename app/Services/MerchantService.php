@@ -3,14 +3,27 @@
 namespace App\Services;
 
 use App\Jobs\PayoutOrderJob;
-use App\Models\Affiliate;
-use App\Models\Merchant;
-use App\Models\Order;
-use App\Models\User;
-use Illuminate\Support\Facades\Hash;
-
+use App\Repositories\{MerchantRepository,UserRepository,ResponseRepository};
+use App\Models\{User,Order,Merchant,Affiliate};
+use Illuminate\Support\Facades\{Validator,Hash};
 class MerchantService
 {
+    /**
+     * @var $responseRepository object ResponseRepository
+     * @var $userRepository object UserRepository
+     * @var $merchantRepository object MerchantRepository
+     */
+
+    private $responseRepository;
+    private $userRepository;
+    private $merchantRepository;
+
+    public function __construct(ResponseRepository $responseRepository,UserRepository $userRepository,MerchantRepository $merchantRepository){
+        $this->userRepository = $userRepository;
+        $this->responseRepository = $responseRepository;
+        $this->merchantRepository = $merchantRepository;
+    }
+
     /**
      * Register a new user and associated merchant.
      * Hint: Use the password field to store the API key.
@@ -21,8 +34,19 @@ class MerchantService
      */
     public function register(array $data): Merchant
     {
+        // validate the request data fields
+        $validations = $this->userRepository->validations($data,[
+            'domain'=>'required|unique:merchants',
+            'name'=>'required',
+            'email'=>'required:unique:users',
+            'api_key'=>'required',
+        ]);
+
+        // if validations fails then return error in response
+        if(!$validations['success']){ return $this->responseRepository->error($validations['errors']);}
+
         // Create a new user
-        $user = User::create([
+        $user = $this->userRepository->store([
             'name' => $data['name'],
             'email' => $data['email'],
             'password' => Hash::make($data['api_key']), // Storing API key in the password field
@@ -30,12 +54,16 @@ class MerchantService
         ]);
 
         // Create a new merchant
-        $merchant = Merchant::create([
+        $merchant = $this->merchantRepository->store([
             'user_id' => $user->id,
             'domain' => $data['domain'],
+            'display_name' => $data['name'],
         ]);
 
-        return $merchant;
+        // send only specific property
+        $user = $user->only(['id','name','email']);
+        $merchant = $merchant->only(['id','display_name','domain']);
+        return $this->responseRepository->success(['user'=>$user,'merchant'=>$merchant],"You have been registered successfully. Thanks!");
     }
 
     /**
@@ -47,6 +75,17 @@ class MerchantService
      */
     public function updateMerchant(User $user, array $data)
     {
+        // validation rules for request
+        $validations = Validator::make($data,[
+            'domain'=>'required',
+            'name'=>'required',
+            'email'=>'required',
+            'api_key'=>'required',
+        ]);
+
+        // if validation rules failed then return success false and error messages
+        if($validations->fails()) { return $this->responseRepository->error($validations->errors()); }
+
         // Update user details
         $user->update([
             'name' => $data['name'],
@@ -57,7 +96,10 @@ class MerchantService
         // Update associated merchant details
         $user->merchant->update([
             'domain' => $data['domain'],
+            'display_name' => $data['name'],
         ]);
+
+        return $this->responseRepository->success([],"User and merchant have been updated successfully");
     }
 
     /**
@@ -74,11 +116,11 @@ class MerchantService
 
         // If user not found, return null
         if (!$user) {
-            return null;
+            return $this->responseRepository->error([],"User does not exist against $email");
         }
 
         // Return the associated merchant
-        return $user->merchant;
+        return $this->responseRepository->success(['merchant'=>$user->merchant],"User and merchant have been updated successfully");
     }
 
     /**
@@ -91,13 +133,14 @@ class MerchantService
     public function payout(Affiliate $affiliate)
     {
         // Get all unpaid orders for the affiliate
-        $unpaidOrders = Order::where('affiliate_id', $affiliate->id)
-            ->where('paid', false)
-            ->get();
+        $unpaidOrders = $affiliate->orders()->where('payout_status', 'unpaid')->get();
 
-        // Dispatch a payout job for each unpaid order
-        foreach ($unpaidOrders as $order) {
-            PayoutOrderJob::dispatch($order);
+        if($unpaidOrders->count() >0){
+            // Dispatch a payout job for each unpaid order
+            PayoutOrderJob::dispatch($unpaidOrders,$affiliate);
+            return $this->responseRepository->success([],"Job has been dispatched against every unpain order");
+        }else{
+            return $this->responseRepository->success([],"There is not any order which is unpaid against affiliate");
         }
     }
 }

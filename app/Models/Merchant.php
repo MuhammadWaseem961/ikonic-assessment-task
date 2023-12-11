@@ -26,6 +26,11 @@ class Merchant extends Model
         'default_commission_rate'
     ];
 
+    public function affiliate(): HasOne
+    {
+        return $this->hasOne(Affiliate::class);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

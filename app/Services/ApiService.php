@@ -5,13 +5,25 @@ namespace App\Services;
 use App\Models\Affiliate;
 use App\Models\Merchant;
 use Illuminate\Support\Str;
+use App\Repositories\UserRepository;
 use Illuminate\Support\Facades\Http;
-
+use Config;
 /**
  * You don't need to do anything here. This is just to help
  */
 class ApiService
 {
+
+    /**
+     * @var $userRepository object userRepository
+     */
+
+     private $userRepository;
+
+     public function __construct(UserRepository $userRepository){
+         $this->userRepository = $userRepository;
+     }
+
     /**
      * Create a new discount code for an affiliate
      *
@@ -34,35 +46,27 @@ class ApiService
      * @param  float $amount
      * @return array
      */
-    public function sendPayout(string $email, float $amount): array
+    public function sendPayout(string $email, float $amount):array
     {
-        // Dummy PayPal API endpoint (replace with the actual endpoint)
-        $apiEndpoint = 'https://api.paypal.com/payouts';
+        $stripeSK = Config::get('app.stripe_sk');
+        $user = $this->userRepository->findByEmail($email);
+        $affiliate = $user->affiliate;
+        $stripeConnectedAccountID = $affiliate!=null?$affiliate->stripe_connected_account_id:'';
+        if($stripeConnectedAccountID!=''){
+            $stripe = new \Stripe\StripeClient($stripeSK);
 
-        // Dummy PayPal API credentials (replace with your actual credentials)
-        $clientId = 'your_client_id';
-        $clientSecret = 'your_client_secret';
+            $transfer = $stripe->transfers->create([
+                'amount' => $amount*100,
+                'currency' => 'usd',
+                'destination' =>$stripeConnectedAccountID
+            ]);
 
-        // Dummy request payload (replace with the actual payload)
-        $requestPayload = [
-            'recipient_email' => $email,
-            'amount' => $amount,
-            // Other required fields...
-        ];
-
-        // Make a cURL request to PayPal API using Laravel's HTTP client
-        $response = Http::withBasicAuth($clientId, $clientSecret)
-            ->post($apiEndpoint, $requestPayload);
-
-        // Check the response status and handle success or failure accordingly
-        if ($response->successful()) {
-            // Payout successful
-            // You might want to log the transaction or perform other actions
-            return ['status' => 'success', 'message' => 'Payout successful'];
-        } else {
-            // Payout failed
-            // You might want to log the error or return specific error details
-            return ['status' => 'error', 'message' => 'Failed to send payout', 'error' => $response->json()];
+            if(isset($transfer->id)){
+                return ['success' => true, 'message' => 'Payout successful'];
+            }else{
+                return ['success' => false, 'error' => 'something went wrong'];
+            }
         }
+        return ['success' => false, 'error' => 'Stripe connected account id is empty'];
     }
 }

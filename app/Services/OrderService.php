@@ -2,16 +2,32 @@
 
 namespace App\Services;
 
-use App\Models\Affiliate;
-use App\Models\Merchant;
-use App\Models\Order;
-use App\Models\User;
+use App\Models\{Affiliate,Merchant,User,Order};
+use App\Repositories\{MerchantRepository,UserRepository,OrderRepository,ResponseRepository};
 
 class OrderService
 {
-    public function __construct(
-        protected AffiliateService $affiliateService
-    ) {}
+    /**
+     * @var $affiliateService object AffiliateService
+     * @var $responseRepository object ResponseRepository
+     * @var $merchantRepository object MerchantRepository
+     * @var $userRepository object UserRepository
+     * @var $orderRepository object OrderRepository
+    */
+
+    private $affiliateService;
+    private $responseRepository;
+    private $merchantRepository;
+    private $userRepository;
+    private $orderRepository;
+
+    public function __construct(AffiliateService $affiliateService,ResponseRepository $responseRepository,MerchantRepository $merchantRepository,UserRepository $userRepository,OrderRepository $orderRepository){
+        $this->responseRepository = $responseRepository;
+        $this->affiliateService = $affiliateService;
+        $this->merchantRepository = $merchantRepository;
+        $this->userRepository = $userRepository;
+        $this->orderRepository = $orderRepository;
+    }
 
     /**
      * Process an order and log any commissions.
@@ -19,52 +35,46 @@ class OrderService
      * This method should also ignore duplicates based on order_id.
      *
      * @param  array{order_id: string, subtotal_price: float, merchant_domain: string, discount_code: string, customer_email: string, customer_name: string} $data
-     * @return void
      */
     public function processOrder(array $data)
     {
+        $orderID = $data['order_id'];
         // Check if the order with the same order_id already exists
         if (Order::where('order_id', $data['order_id'])->exists()) {
-            // Ignore duplicates
-            return;
+            return $this->responseRepository->error([],"Order ID $orderID has been already processed");
         }
 
-        // Find or create a user based on the email
-        $user = User::firstOrCreate(['email' => $data['customer_email']]);
+
+        // fetch the merchant against merchant domain
+        $merchant = $this->merchantRepository->findByDomain($data['merchant_domain']);
+        if(is_null($merchant)){
+            return $this->responseRepository->error([],"Merchant does not exist against ".$data['merchant_domain']);
+        }
+
+        // affiliate user if already exist
+        $user = $this->userRepository->findByConditions(['email' => $data['email'],'type' => User::TYPE_AFFILIATE]);
 
         // Find the associated affiliate for the user
         $affiliate = $user->affiliate;
 
         // If affiliate not found, create a new affiliate
         if (!$affiliate) {
-            // You may want to adjust the commission rate based on your business logic
             $commissionRate = 0.1; // Example commission rate
-            $merchant = Merchant::where('domain', $data['merchant_domain'])->first();
-
-            // If the merchant is not found, you may want to handle this case according to your requirements
-            if (!$merchant) {
-                // Handle the case where the merchant is not found
-                // You might throw an exception, log an error, or take other appropriate actions
-                return;
+            $affiliate = $this->affiliateService->register($merchant, $data['customer_email'], $data['customer_name'], $commissionRate);
+            if(is_null($affiliate)){
+                return $this->responseRepository->error([],'Sorry!,Affiliate could not be created');
             }
-
-            // Create a new affiliate associated with the user
-            $affiliate = $this->affiliateService->register($merchant, $user, $data['customer_name'], $commissionRate);
         }
 
         // Create a new order
-        $order = new Order([
+        $order = $this->orderRepository->store([
             'order_id' => $data['order_id'],
-            'subtotal_price' => $data['subtotal_price'],
+            'subtotal' => $data['subtotal_price'],
             'discount_code' => $data['discount_code'],
-            'customer_email' => $data['customer_email'],
-            'customer_name' => $data['customer_name'],
+            'merchant_id' => $merchant->id,
             'affiliate_id' => $affiliate->id,
         ]);
 
-        // Save the order to the database
-        $order->save();
-
-        // Perform any additional processing or logging as needed
+        return $this->responseRepository->success([],'Order has been processed and created successfully');
     }
 }

@@ -18,14 +18,18 @@ class PayoutOrderJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    private $orders;
+    private $affiliate;
+
     /**
      * Create a new job instance.
      *
      * @return void
      */
-    public function __construct(
-        public Order $order
-    ) {}
+    public function __construct($orders,$affiliate) {
+        $this->orders = $orders;
+        $this->affiliate = $affiliate;
+    }
 
     /**
      * Use the API service to send a payout of the correct amount.
@@ -37,22 +41,23 @@ class PayoutOrderJob implements ShouldQueue
     public function handle(ApiService $apiService)
     {
         try {
-            // Assuming there's a sendPayout method in the ApiService
-            $result = $apiService->sendPayout($this->order->customer_email, $this->order->commission_amount);
-
-            // If the payout is successful, update the order status to paid
-            if ($result['status'] === 'success') {
-                DB::transaction(function () {
-                    $this->order->update(['paid' => true]);
-                });
-            } else {
-                // Payout failed, log the error
-                Log::error('Failed to send payout', ['order_id' => $this->order->id, 'error' => $result['error']]);
+            foreach ($this->orders as $order) {
+                // Assuming there's a sendPayout method in the ApiService
+                $result = $apiService->sendPayout($this->affiliate->user->email, $order->commission_owed);
+                // If the payout is successful, update the order status to paid
+                if ($result['success'] == true) {
+                    DB::transaction(function () {
+                        $order->update(['payout_status' => 'paid']);
+                    });
+                } else {
+                    // Payout failed, log the error
+                    Log::error('Failed to send payout', ['order_id' => $order->id, 'error' => $result['error']]);
+                }
             }
         } catch (RuntimeException $exception) {
             // Handle the exception as needed (log, notify, etc.)
             // The order status remains unpaid in case of an exception
-            report($exception);
+            // report($exception);
         }
     }
 }

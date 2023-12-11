@@ -2,7 +2,6 @@
 
 namespace App\Mail;
 
-use App\Models\Affiliate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
@@ -11,15 +10,15 @@ use Illuminate\Queue\SerializesModels;
 class AffiliateCreated extends Mailable
 {
     use Queueable, SerializesModels;
-
+    private $data;
     /**
      * Create a new message instance.
      *
      * @return void
      */
-    public function __construct(
-        public Affiliate $affiliate
-    ) {}
+    public function __construct($data) {
+        $this->data = $data;
+    }
 
     /**
      * Build the message.
@@ -28,6 +27,7 @@ class AffiliateCreated extends Mailable
      */
     public function build()
     {
-        return $this->view('view.name');
+        $data = $this->data;
+        return $this->to($data->user->email)->markdown('emails.createAffiliate',compact('data'));
     }
 }

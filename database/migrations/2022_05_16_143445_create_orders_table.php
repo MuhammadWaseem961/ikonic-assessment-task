@@ -24,6 +24,7 @@ return new class extends Migration
             $table->decimal('commission_owed', 8, 2)->default(0.00); // Adjust precision and scale as needed
             $table->string('payout_status')->default(Order::STATUS_UNPAID);
             $table->string('discount_code')->nullable();
+            $table->string('order_id')->nullable();
             $table->timestamps();
         });
     }

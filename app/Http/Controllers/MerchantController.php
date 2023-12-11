@@ -2,19 +2,27 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Merchant;
+use App\Repositories\{ResponseRepository};
 use App\Services\MerchantService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Validator;
 
 class MerchantController extends Controller
 {
-    protected $merchantService;
+    /**
+     * @var $merchantService object MerchantService
+     * @var $responseRepository object ResponseRepository
+    */
 
-    public function __construct(MerchantService $merchantService)
-    {
+    private $merchantService;
+    private $responseRepository;
+
+    public function __construct(MerchantService $merchantService,ResponseRepository $responseRepository){
+        $this->responseRepository = $responseRepository;
         $this->merchantService = $merchantService;
+
     }
 
     /**
@@ -25,38 +33,46 @@ class MerchantController extends Controller
      */
     public function orderStats(Request $request): JsonResponse
     {
-        // Extract the 'from' and 'to' dates from the request
-        $fromDate = Carbon::parse($request->input('from'));
-        $toDate = Carbon::parse($request->input('to'));
+        // validation rules for request
+        $validations = Validator::make($request->only(['to','from','merchant_email']),[
+            'merchant_email'=>'required|email',
+            'to'=>'required|date',
+            'from'=>'required|date',
+        ]);
 
-        // You might use an email or other identifier to fetch the merchant
-        $merchantEmail = $request->input('merchant_email');
-        $merchant = $this->merchantService->findMerchantByEmail($merchantEmail);
+        // if validation rules failed then return success false and error messages
+        if($validations->fails()) { return $this->responseRepository->error($validations->errors()); }
+
+        // find the merchant against email
+        $merchant = $this->merchantService->findMerchantByEmail($request->merchant_email);
 
         if (!$merchant) {
-            return response()->json(['error' => 'Merchant not found'], 404);
+            return $this->responseRepository->error([],'Merchant does not exist against '.$request->merchant_email);
         }
 
-        // Eager load orders and affiliates for the merchant
-        $merchant->load(['orders', 'orders.affiliate']);
-
         // Filter orders within the specified date range
-        $filteredOrders = $merchant->orders
-            ->where('created_at', '>=', $fromDate)
-            ->where('created_at', '<=', $toDate);
+        $filteredOrders = $merchant->orders()
+            ->where('created_at', '>=', Carbon::parse($request->from))
+            ->where('created_at', '<=', Carbon::parse($request->to));
 
         // Calculate order statistics
-        $orderCount = $filteredOrders->count();
-        $unpaidCommissions = $filteredOrders
-            ->where('paid', false)
-            ->sum('commission_amount');
-        $revenue = $filteredOrders->sum('subtotal_price');
+        $ordersCount = $filteredOrders->count();
+        // commission with an affiliate
+        $unpaidCommissions = $merchant->affiliate->orders()
+            ->where('created_at', '>=', Carbon::parse($request->from))
+            ->where('created_at', '<=', Carbon::parse($request->to))
+            ->where('payout_status', 'unpaid')
+            ->sum('commission_owed');
+
+        // total revenue of orders within range
+        $revenue = $filteredOrders->sum('subtotal');
 
         // Return the statistics as a JSON response
-        return response()->json([
-            'count' => $orderCount,
+        return $this->responseRepository->success([
+            'count' => $ordersCount,
             'commission_owed' => $unpaidCommissions,
             'revenue' => $revenue,
         ]);
+
     }
 }
